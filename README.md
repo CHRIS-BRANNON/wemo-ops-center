@@ -1,3 +1,9 @@
+# Wemo Ops Center
+
+![Wemo Ops Center Dashboard](assets/wemo-ops.png)
+
+**Resurrect Your Hardware: The Wemo Cloud is dead, but your devices don't have to be.**
+
 ## ⚠️ "Windows protected your PC" Warning
 When you launch `wemo_ops.exe` for the first time, you may see a blue warning from Microsoft Defender SmartScreen.
 
