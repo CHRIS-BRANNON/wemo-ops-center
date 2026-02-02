@@ -1,3 +1,0 @@
-([('WemoOpsCenter',
-   '/Users/quentinrussell/Library/CloudStorage/OneDrive-Personal/dist/WemoOpsCenter',
-   'EXECUTABLE')],)
