@@ -3,18 +3,17 @@ import pywemo
 import threading
 import sys
 import os
-import subprocess
 import time
 import json
-from tkinter import messagebox
-import pyperclip
 import requests
 import datetime
+from tkinter import messagebox
+import pyperclip
 
 # --- CONFIGURATION ---
 VERSION = "v4.0"
 
-# --- PATH SETUP (Unified Storage) ---
+# --- PATH SETUP ---
 if sys.platform == "darwin":
     APP_DATA_DIR = os.path.expanduser("~/Library/Application Support/WemoOps")
 else:
@@ -36,7 +35,7 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("dark-blue")
 
 # ==============================================================================
-#  SOLAR ENGINE (Sunset/Sunrise Calculation)
+#  SOLAR ENGINE (Fixed Timezone Math)
 # ==============================================================================
 class SolarEngine:
     def __init__(self):
@@ -58,7 +57,6 @@ class SolarEngine:
 
     def get_solar_times(self):
         today = datetime.date.today()
-        # Return cached if we have it for today
         if self.last_fetch == today and self.solar_times:
             return self.solar_times
 
@@ -66,7 +64,6 @@ class SolarEngine:
             if not self.detect_location(): return None
 
         try:
-            # Free API: https://sunrise-sunset.org/api
             url = f"https://api.sunrise-sunset.org/json?lat={self.lat}&lng={self.lng}&formatted=0"
             r = requests.get(url, timeout=5)
             data = r.json()
@@ -74,14 +71,18 @@ class SolarEngine:
             if data["status"] == "OK":
                 res = data["results"]
                 
-                # Convert UTC ISO string to Local HH:MM
+                # --- CRASH FIX: Modern Timezone Handling ---
                 def to_local(utc_str):
-                    dt_utc = datetime.datetime.fromisoformat(utc_str)
-                    # Hacky local timezone offset calculation for portability
-                    now_timestamp = time.time()
-                    offset = datetime.datetime.fromtimestamp(now_timestamp) - datetime.datetime.utcfromtimestamp(now_timestamp)
-                    dt_local = dt_utc + offset
-                    return dt_local.strftime("%H:%M")
+                    try:
+                        # Parse ISO string
+                        dt_utc = datetime.datetime.fromisoformat(utc_str)
+                        # Convert to Local System Time using astimezone()
+                        dt_local = dt_utc.astimezone()
+                        return dt_local.strftime("%H:%M")
+                    except Exception as e:
+                        print(f"Time Conversion Error: {e}")
+                        return "00:00" # Safe fallback
+                # -------------------------------------------
 
                 self.solar_times = {
                     "sunrise": to_local(res["sunrise"]),
@@ -90,7 +91,7 @@ class SolarEngine:
                 self.last_fetch = today
                 return self.solar_times
         except Exception as e:
-            print(f"Solar Error: {e}")
+            print(f"Solar API Error: {e}")
         return None
 
 # ==============================================================================
@@ -108,23 +109,24 @@ class WemoOpsApp(ctk.CTk):
         self.current_setup_ip = None 
         self.current_setup_port = None 
         
-        # --- DATA LOADING (Robust Types) ---
+        # --- ROBUST DATA LOADING ---
         self.profiles = self.load_json(PROFILE_FILE, dict)
         self.settings = self.load_json(SETTINGS_FILE, dict)
 
-        # SCHEDULE SANITIZER: Force 'list' type or reset file
+        # --- CRASH FIX: Aggressive Schedule Sanitizer ---
         self.schedules = []
         try:
-            raw_sched = self.load_json(SCHEDULE_FILE, list)
-            if isinstance(raw_sched, list):
-                self.schedules = raw_sched
-            else:
-                # If we loaded a dict (legacy file), overwrite it immediately
-                print("Corrupt schedule file detected. Resetting to empty list.")
-                self.save_json(SCHEDULE_FILE, [])
+            if os.path.exists(SCHEDULE_FILE):
+                with open(SCHEDULE_FILE, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self.schedules = data
+                    else:
+                        print("Corrupt Format (Not a List). Wiping schedules.")
+                        self.save_json(SCHEDULE_FILE, [])
         except Exception as e:
-            print(f"Critical Load Error: {e}. Resetting schedules.")
-            self.save_json(SCHEDULE_FILE, [])
+            print(f"Load Crash: {e}. Wiping schedules.")
+            self.save_json(SCHEDULE_FILE, []) # Reset on ANY error
         
         self.known_devices_map = {} 
         self.solar = SolarEngine()
@@ -144,7 +146,7 @@ class WemoOpsApp(ctk.CTk):
         # Navigation Buttons
         self.btn_dash = self.create_nav_btn("Dashboard", "dash")
         self.btn_prov = self.create_nav_btn("Provisioner", "prov")
-        self.btn_sched = self.create_nav_btn("Automation", "sched") # New Tab
+        self.btn_sched = self.create_nav_btn("Automation", "sched")
         
         ctk.CTkLabel(self.sidebar, text=f"{VERSION}", text_color="gray", font=("Arial", 10)).pack(side="bottom", pady=10)
 
@@ -177,7 +179,6 @@ class WemoOpsApp(ctk.CTk):
         for key, frame in self.frames.items(): frame.pack_forget()
         self.frames[name].pack(fill="both", expand=True)
         
-        # Update styling
         self.btn_dash.configure(fg_color="transparent", text_color=("gray10", "gray90"))
         self.btn_prov.configure(fg_color="transparent", text_color=("gray10", "gray90"))
         self.btn_sched.configure(fg_color="transparent", text_color=("gray10", "gray90"))
@@ -187,7 +188,7 @@ class WemoOpsApp(ctk.CTk):
         elif name == "sched": self.btn_sched.configure(fg_color=("gray75", "gray25"), text_color="white")
 
     # ---------------------------------------------------------
-    # DASHBOARD (v3.1 Original Layout)
+    # DASHBOARD
     # ---------------------------------------------------------
     def create_dashboard(self):
         frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
@@ -230,7 +231,6 @@ class WemoOpsApp(ctk.CTk):
         for dev in devices: self.build_device_card(dev)
 
     def build_device_card(self, dev):
-        # v3.1 Card Style (No "Manage" Button)
         try: mac = getattr(dev, 'mac', "Unknown")
         except: mac = "Unknown"
         try: serial = getattr(dev, 'serial_number', "Unknown")
@@ -304,7 +304,7 @@ class WemoOpsApp(ctk.CTk):
         except Exception as e: self.after(0, lambda: messagebox.showerror("Error", str(e)))
 
     # ---------------------------------------------------------
-    # PROVISIONER (v3.1 Original Layout - No Dev Options)
+    # PROVISIONER
     # ---------------------------------------------------------
     def create_provisioner(self):
         frame = ctk.CTkFrame(self.main_area, fg_color="transparent")

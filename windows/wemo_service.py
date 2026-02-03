@@ -5,6 +5,11 @@ import os
 import datetime
 import requests
 import sys
+import ctypes # For Single Instance Lock
+
+# --- CONFIGURATION ---
+VERSION = "v4.0-Service"
+MUTEX_NAME = "Global\\WemoOps_Service_Mutex_Unique_ID"
 
 # --- PATH SETUP ---
 if sys.platform == "darwin":
@@ -14,6 +19,23 @@ else:
 
 SCHEDULE_FILE = os.path.join(APP_DATA_DIR, "schedules.json")
 SETTINGS_FILE = os.path.join(APP_DATA_DIR, "settings.json")
+
+# --- SINGLE INSTANCE ENFORCER ---
+def is_already_running():
+    """
+    Creates a system-wide named mutex. If it fails, another instance is running.
+    """
+    if sys.platform != 'win32':
+        return False # Mutex logic is Windows-specific for now
+        
+    kernel32 = ctypes.windll.kernel32
+    mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    last_error = kernel32.GetLastError()
+    
+    # ERROR_ALREADY_EXISTS = 183
+    if last_error == 183:
+        return True
+    return False
 
 # --- UTILS ---
 def load_json(path, default_type=dict):
@@ -37,7 +59,6 @@ class SolarEngine:
         self.solar_times = {}
         self.last_fetch = None
         
-        # Load cached location
         settings = load_json(SETTINGS_FILE, dict)
         if "lat" in settings:
             self.lat = settings["lat"]
@@ -55,10 +76,9 @@ class SolarEngine:
             if data["status"] == "OK":
                 res = data["results"]
                 def to_local(utc_str):
+                    # Fixed Timezone Math
                     dt_utc = datetime.datetime.fromisoformat(utc_str)
-                    now_timestamp = time.time()
-                    offset = datetime.datetime.fromtimestamp(now_timestamp) - datetime.datetime.utcfromtimestamp(now_timestamp)
-                    dt_local = dt_utc + offset
+                    dt_local = dt_utc.astimezone()
                     return dt_local.strftime("%H:%M")
 
                 self.solar_times = {
@@ -72,7 +92,12 @@ class SolarEngine:
 
 # --- MAIN SERVICE LOOP ---
 def run_service():
-    print("Wemo Ops Service Started...")
+    # 1. CHECK SINGLE INSTANCE
+    if is_already_running():
+        print("Another instance is already running. Quitting.")
+        sys.exit(0)
+
+    print(f"Wemo Ops Service {VERSION} Started...")
     solar = SolarEngine()
     known_devices = {}
 
@@ -84,17 +109,14 @@ def run_service():
 
     while True:
         try:
-            # 1. Reload Schedules (Hot-Reload)
             schedules = load_json(SCHEDULE_FILE, list)
             
-            # 2. Get Environment
             now = datetime.datetime.now()
             today_str = now.strftime("%Y-%m-%d")
             weekday = now.weekday()
             current_hhmm = now.strftime("%H:%M")
             solar_data = solar.get_solar_times()
 
-            # 3. Check Jobs
             for job in schedules:
                 if weekday not in job['days']: continue
                 
@@ -110,15 +132,12 @@ def run_service():
                         trigger_time = trigger_dt.strftime("%H:%M")
                     except: continue
 
-                # Fire Condition
                 if trigger_time == current_hhmm and job.get('last_run') != today_str:
-                    print(f"Firing {job['action']} on {job['device']}")
                     
-                    # Discover device if missing
                     if job['device'] not in known_devices:
                         try:
-                            devices = pywemo.discover_devices()
-                            for d in devices: known_devices[d.name] = d
+                            devs = pywemo.discover_devices()
+                            for d in devs: known_devices[d.name] = d
                         except: pass
 
                     if job['device'] in known_devices:
@@ -128,14 +147,11 @@ def run_service():
                             elif job['action'] == "Turn OFF": dev.off()
                             elif job['action'] == "Toggle": dev.toggle()
                             
-                            # Mark complete
                             job['last_run'] = today_str
                             save_json(SCHEDULE_FILE, schedules)
                         except: pass
-        except Exception as e:
-            print(f"Service Error: {e}")
+        except: pass
         
-        # Deep Sleep
         time.sleep(30)
 
 if __name__ == "__main__":
