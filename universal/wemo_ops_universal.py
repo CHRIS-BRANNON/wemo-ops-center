@@ -15,7 +15,7 @@ from tkinter import messagebox
 import pyperclip
 
 # --- CONFIGURATION ---
-VERSION = "v4.1.0 (Service Control)"
+VERSION = "v4.1.6 (Subnet Lists & Fixes)"
 
 # --- PATH SETUP (Cross-Platform) ---
 if sys.platform == "darwin":
@@ -107,19 +107,16 @@ class NetworkUtils:
         return [ssid for ssid in list(set(wemos)) if "wemo" in ssid.lower() or "belkin" in ssid.lower()]
 
 # ==============================================================================
-#  SERVICE MANAGER (NEW)
+#  SERVICE MANAGER
 # ==============================================================================
 class ServiceManager:
     @staticmethod
     def is_running():
-        """Checks if wemo_service is running."""
         try:
             if sys.platform == "win32":
-                # Check for the specific EXE name
                 output = subprocess.check_output('tasklist /FI "IMAGENAME eq wemo_service.exe"', shell=True).decode()
                 return "wemo_service.exe" in output
             else:
-                # Linux/Mac check
                 try:
                     subprocess.check_output('pgrep -f "wemo_service"', shell=True)
                     return True
@@ -128,7 +125,6 @@ class ServiceManager:
 
     @staticmethod
     def start_service():
-        """Attempts to launch the service executable."""
         if os.path.exists(SERVICE_EXE_PATH):
             try:
                 if sys.platform == "win32":
@@ -154,38 +150,43 @@ class DeepScanner:
 
     def scan_subnet(self, target_cidr=None, status_callback=None):
         found_devices = []
-        cidr = target_cidr if target_cidr else NetworkUtils.get_subnet_cidr()
+        # Support comma-separated subnets
+        cidrs = [c.strip() for c in target_cidr.split(',')] if target_cidr else [NetworkUtils.get_subnet_cidr()]
         
-        if status_callback: status_callback(f"Scanning Subnet: {cidr}")
-        try:
-            network = ipaddress.ip_network(cidr, strict=False)
-            hosts = list(network.hosts())
-            active_ips = []
-            
-            if status_callback: status_callback(f"Probing {len(hosts)} IPs...")
+        all_hosts = []
+        for cidr in cidrs:
+            if not cidr: continue
+            try:
+                if status_callback: status_callback(f"Preparing Subnet: {cidr}")
+                network = ipaddress.ip_network(cidr, strict=False)
+                all_hosts.extend(list(network.hosts()))
+            except: 
+                if status_callback: status_callback(f"Skipping Invalid Subnet: {cidr}")
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
-                futures = {executor.submit(self.probe_port, ip): ip for ip in hosts}
-                for future in concurrent.futures.as_completed(futures):
-                    result = future.result()
-                    if result: active_ips.append(result)
+        if not all_hosts: return []
 
-            if status_callback: status_callback(f"Found {len(active_ips)} active hosts. Verifying...")
-            
-            for ip in active_ips:
+        active_ips = []
+        if status_callback: status_callback(f"Probing {len(all_hosts)} IPs across networks...")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+            futures = {executor.submit(self.probe_port, ip): ip for ip in all_hosts}
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result: active_ips.append(result)
+
+        if status_callback: status_callback(f"Found {len(active_ips)} active hosts. Verifying Wemo...")
+        
+        for ip in active_ips:
+            try:
+                url = f"http://{ip}:49153/setup.xml"
+                dev = pywemo.discovery.device_from_description(url)
+                if dev: found_devices.append(dev)
+            except:
                 try:
-                    url = f"http://{ip}:49153/setup.xml"
-                    dev = pywemo.discovery.device_from_description(url)
+                    url_alt = f"http://{ip}:49152/setup.xml"
+                    dev = pywemo.discovery.device_from_description(url_alt)
                     if dev: found_devices.append(dev)
-                except:
-                    try:
-                        url_alt = f"http://{ip}:49152/setup.xml"
-                        dev = pywemo.discovery.device_from_description(url_alt)
-                        if dev: found_devices.append(dev)
-                    except: pass
-        except Exception as e:
-            print(f"Scan Error: {e}")
-            if status_callback: status_callback(f"Invalid Subnet: {cidr}")
+                except: pass
         return found_devices
 
 # ==============================================================================
@@ -255,6 +256,9 @@ class WemoOpsApp(ctk.CTk):
         self.settings = self.load_json(SETTINGS_FILE, dict)
         self.schedules = self.load_json(SCHEDULE_FILE, list) or []
         
+        # Load Saved Subnets
+        self.saved_subnets = self.settings.get("subnets", [])
+        
         self.known_devices_map = {} 
         self.solar = SolarEngine()
         self.scanner = DeepScanner()
@@ -269,7 +273,6 @@ class WemoOpsApp(ctk.CTk):
         self.logo = ctk.CTkLabel(self.sidebar, text="WEMO OPS", font=("Arial Black", 20))
         self.logo.pack(pady=20)
         
-        # Icon Logic
         if getattr(sys, 'frozen', False):
             icon_path = os.path.join(sys._MEIPASS, "app_icon.ico")
         else:
@@ -281,23 +284,19 @@ class WemoOpsApp(ctk.CTk):
         self.btn_dash = self.create_nav_btn("Dashboard", "dash")
         self.btn_prov = self.create_nav_btn("Provisioner", "prov")
         self.btn_sched = self.create_nav_btn("Automation", "sched")
+        self.btn_maint = self.create_nav_btn("Maintenance", "maint")
 
-        # --- NEW: SERVICE CONTROL ---
+        # --- SERVICE CONTROL ---
         self.service_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         self.service_frame.pack(side="bottom", fill="x", pady=20, padx=10)
-        
         self.svc_lbl = ctk.CTkLabel(self.service_frame, text="Service Status:", font=("Arial", 12, "bold"))
         self.svc_lbl.pack(anchor="w")
-        
         self.svc_status = ctk.CTkLabel(self.service_frame, text="Checking...", text_color="gray")
         self.svc_status.pack(anchor="w")
-
         self.svc_btn = ctk.CTkButton(self.service_frame, text="▶ Start Service", 
                                      fg_color="#28a745", hover_color="#1e7e34", height=24,
                                      command=self.start_service_manually)
-        # Button starts hidden
         self.svc_btn.pack_forget()
-
         ctk.CTkLabel(self.sidebar, text=f"{VERSION}", text_color="gray", font=("Arial", 10)).pack(side="bottom", pady=5)
 
         # Main Area
@@ -308,6 +307,7 @@ class WemoOpsApp(ctk.CTk):
         self.create_dashboard()
         self.create_provisioner()
         self.create_schedule_ui()
+        self.create_maintenance_ui()
 
         self.show_tab("dash")
         self.after(500, self.refresh_network)
@@ -315,31 +315,25 @@ class WemoOpsApp(ctk.CTk):
         self.monitoring = True
         threading.Thread(target=self._connection_monitor, daemon=True).start()
         threading.Thread(target=self._scheduler_engine, daemon=True).start()
-        
-        # Start Service Monitoring Loop
         self.check_service_loop()
 
-    # --- SERVICE CONTROL METHODS ---
+    # --- SERVICE CONTROL ---
     def check_service_loop(self):
         is_running = ServiceManager.is_running()
-        
         if is_running:
             self.svc_status.configure(text="✅ RUNNING", text_color="#28a745")
-            self.svc_btn.pack_forget() # Hide start button if running
+            self.svc_btn.pack_forget()
         else:
             self.svc_status.configure(text="❌ STOPPED", text_color="#ff5555")
-            self.svc_btn.pack(fill="x", pady=(5,0)) # Show start button
-            
-        self.after(3000, self.check_service_loop) # Check every 3 seconds
+            self.svc_btn.pack(fill="x", pady=(5,0))
+        self.after(3000, self.check_service_loop)
 
     def start_service_manually(self):
         self.svc_btn.configure(state="disabled", text="Starting...")
         success = ServiceManager.start_service()
-        if success:
-            self.svc_status.configure(text="⏳ STARTING...", text_color="orange")
-            # Loop will pick up the running state shortly
+        if success: self.svc_status.configure(text="⏳ STARTING...", text_color="orange")
         else:
-            messagebox.showerror("Error", f"Could not find service executable at:\n{SERVICE_EXE_PATH}\n\nIs the app installed properly?")
+            messagebox.showerror("Error", f"Could not find service executable at:\n{SERVICE_EXE_PATH}")
             self.svc_btn.configure(state="normal", text="▶ Start Service")
 
     def create_nav_btn(self, text, view_name):
@@ -353,9 +347,12 @@ class WemoOpsApp(ctk.CTk):
         self.btn_dash.configure(fg_color="transparent", text_color=("gray10", "gray90"))
         self.btn_prov.configure(fg_color="transparent", text_color=("gray10", "gray90"))
         self.btn_sched.configure(fg_color="transparent", text_color=("gray10", "gray90"))
+        self.btn_maint.configure(fg_color="transparent", text_color=("gray10", "gray90"))
+        
         if name == "dash": self.btn_dash.configure(fg_color=("gray75", "gray25"), text_color="white")
         elif name == "prov": self.btn_prov.configure(fg_color=("gray75", "gray25"), text_color="white")
         elif name == "sched": self.btn_sched.configure(fg_color=("gray75", "gray25"), text_color="white")
+        elif name == "maint": self.btn_maint.configure(fg_color=("gray75", "gray25"), text_color="white")
 
     # --- DASHBOARD ---
     def create_dashboard(self):
@@ -369,12 +366,15 @@ class WemoOpsApp(ctk.CTk):
         scan_ctrl = ctk.CTkFrame(head, fg_color="transparent")
         scan_ctrl.pack(side="right")
         
-        self.subnet_entry = ctk.CTkEntry(scan_ctrl, width=140, placeholder_text="192.168.1.0/24")
-        self.subnet_entry.pack(side="left", padx=5)
-        try: self.subnet_entry.insert(0, NetworkUtils.get_subnet_cidr())
-        except: pass
+        # Subnet Manager UI
+        self.subnet_combo = ctk.CTkComboBox(scan_ctrl, width=200, values=self.saved_subnets)
+        self.subnet_combo.pack(side="left", padx=5)
+        self.subnet_combo.set(NetworkUtils.get_subnet_cidr()) # Default
+        
+        ctk.CTkButton(scan_ctrl, text="💾", width=30, command=self.save_subnet).pack(side="left", padx=2)
+        ctk.CTkButton(scan_ctrl, text="🗑️", width=30, fg_color="#aa3333", command=self.delete_subnet).pack(side="left", padx=(2, 10))
 
-        ctk.CTkButton(scan_ctrl, text="↻ Deep Scan", width=100, command=self.refresh_network).pack(side="left", padx=5)
+        ctk.CTkButton(scan_ctrl, text="Scan Network", width=120, command=self.refresh_network).pack(side="left", padx=5)
         
         self.scan_status = ctk.CTkLabel(scan_ctrl, text="", text_color="orange")
         self.scan_status.pack(side="left", padx=10)
@@ -390,9 +390,30 @@ class WemoOpsApp(ctk.CTk):
         self.dev_list = ctk.CTkScrollableFrame(frame, label_text="Discovered Devices")
         self.dev_list.pack(fill="both", expand=True)
 
+    def save_subnet(self):
+        val = self.subnet_combo.get().strip()
+        if val and val not in self.saved_subnets:
+            self.saved_subnets.append(val)
+            self.settings["subnets"] = self.saved_subnets
+            self.save_json(SETTINGS_FILE, self.settings)
+            self.subnet_combo.configure(values=self.saved_subnets)
+
+    def delete_subnet(self):
+        val = self.subnet_combo.get().strip()
+        if val in self.saved_subnets:
+            self.saved_subnets.remove(val)
+            self.settings["subnets"] = self.saved_subnets
+            self.save_json(SETTINGS_FILE, self.settings)
+            self.subnet_combo.configure(values=self.saved_subnets)
+            if self.saved_subnets: self.subnet_combo.set(self.saved_subnets[0])
+            else: self.subnet_combo.set("")
+
     def refresh_network(self):
+        # CLEAR PREVIOUS RESULTS
+        self.known_devices_map.clear()
         for w in self.dev_list.winfo_children(): w.destroy()
-        manual_subnet = self.subnet_entry.get().strip()
+        
+        manual_subnet = self.subnet_combo.get().strip()
         self.scan_status.configure(text="Initializing...")
         threading.Thread(target=self._scan_thread, args=(manual_subnet,), daemon=True).start()
 
@@ -401,16 +422,20 @@ class WemoOpsApp(ctk.CTk):
         try:
             update_status("Quick Scan (SSDP)...")
             devices = pywemo.discover_devices()
-            for d in devices: self.known_devices_map[d.name] = d
+            # Key by MAC to avoid duplicates
+            for d in devices: 
+                key = getattr(d, 'mac', d.name)
+                self.known_devices_map[key] = d
             
             update_status("Deep Subnet Scan...")
             deep_devices = self.scanner.scan_subnet(target_cidr=target_subnet, status_callback=update_status)
             for d in deep_devices:
-                self.known_devices_map[d.name] = d
-                if d not in devices: devices.append(d)
+                key = getattr(d, 'mac', d.name)
+                self.known_devices_map[key] = d
 
             update_status("")
             self.after(0, self.update_dashboard, list(self.known_devices_map.values()))
+            self.after(0, self.update_maint_dropdown)
             self.after(0, self.update_schedule_dropdown)
         except Exception as e:
             print(e)
@@ -419,6 +444,8 @@ class WemoOpsApp(ctk.CTk):
     def update_dashboard(self, devices):
         for w in self.dev_list.winfo_children(): w.destroy()
         if not devices: ctk.CTkLabel(self.dev_list, text="No devices found.").pack(pady=20)
+        # Sort by name
+        devices.sort(key=lambda x: x.name)
         for dev in devices: self.build_device_card(dev)
 
     def build_device_card(self, dev):
@@ -582,7 +609,78 @@ class WemoOpsApp(ctk.CTk):
                 except: pass
         raise Exception("All provisioning attempts failed.")
 
-    # --- SCHEDULER (Shortened for brevity but functional) ---
+    # --- MAINTENANCE (FIXED) ---
+    def create_maintenance_ui(self):
+        frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
+        self.frames["maint"] = frame
+        ctk.CTkLabel(frame, text="Device Maintenance Tools", font=("Roboto", 24)).pack(pady=20)
+        sel_frame = ctk.CTkFrame(frame, fg_color="#222")
+        sel_frame.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(sel_frame, text="Select Target Device:").pack(side="left", padx=10, pady=10)
+        self.maint_dev_combo = ctk.CTkComboBox(sel_frame, values=["Scanning..."], width=300)
+        self.maint_dev_combo.pack(side="left", padx=10)
+        grid = ctk.CTkFrame(frame, fg_color="transparent")
+        grid.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        c1 = ctk.CTkFrame(grid, fg_color="#332222")
+        c1.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        ctk.CTkLabel(c1, text="Clear Personal Info", font=("Arial", 16, "bold"), text_color="#ffcc00").pack(pady=(15,5))
+        ctk.CTkLabel(c1, text="Removes Name/Icon/Rules", text_color="#bbb").pack(pady=5)
+        ctk.CTkButton(c1, text="Run (Reset=1)", fg_color="#ffcc00", text_color="black", hover_color="#e6b800",
+                      command=lambda: self.run_reset_command(1)).pack(pady=15)
+                      
+        c2 = ctk.CTkFrame(grid, fg_color="#222233")
+        c2.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        ctk.CTkLabel(c2, text="Clear Wi-Fi", font=("Arial", 16, "bold"), text_color="#66aaff").pack(pady=(15,5))
+        ctk.CTkLabel(c2, text="Resets Wi-Fi Credentials", text_color="#bbb").pack(pady=5)
+        ctk.CTkButton(c2, text="Run (Reset=5)", fg_color="#66aaff", text_color="black", hover_color="#5599ee",
+                      command=lambda: self.run_reset_command(5)).pack(pady=15)
+
+        c3 = ctk.CTkFrame(grid, fg_color="#330000")
+        c3.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+        ctk.CTkLabel(c3, text="Factory Reset", font=("Arial", 16, "bold"), text_color="#ff4444").pack(pady=(15,5))
+        ctk.CTkLabel(c3, text="Full Wipe (Out of Box)", text_color="#bbb").pack(pady=5)
+        ctk.CTkButton(c3, text="NUKE (Reset=2)", fg_color="#ff4444", text_color="white", hover_color="#cc0000",
+                      command=lambda: self.run_reset_command(2)).pack(pady=15)
+        
+        grid.columnconfigure(0, weight=1); grid.columnconfigure(1, weight=1); grid.columnconfigure(2, weight=1)
+
+    def update_maint_dropdown(self):
+        names = []
+        for dev in self.known_devices_map.values(): names.append(dev.name)
+        names.sort()
+        if names: 
+            self.maint_dev_combo.configure(values=names)
+            self.maint_dev_combo.set(names[0])
+            
+    def run_reset_command(self, reset_code):
+        name = self.maint_dev_combo.get()
+        # Find device in map by name
+        dev = None
+        for d in self.known_devices_map.values():
+            if d.name == name:
+                dev = d
+                break
+        
+        if not dev:
+            messagebox.showerror("Error", "Device not found.")
+            return
+        
+        confirm = messagebox.askyesno("Confirm Reset", f"Are you sure you want to send Reset Code {reset_code} to '{name}'?\n\nThis cannot be undone.")
+        if not confirm: return
+
+        def task():
+            try:
+                if hasattr(dev, 'basicevent'):
+                    dev.basicevent.ReSetup(Reset=reset_code)
+                    self.after(0, lambda: messagebox.showinfo("Success", f"Command Sent (Code {reset_code}).\nDevice should reboot shortly."))
+                else:
+                    self.after(0, lambda: messagebox.showerror("Error", "Device does not support 'ReSetup' action."))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Failure", f"Command Failed:\n{e}"))
+        threading.Thread(target=task, daemon=True).start()
+
+    # --- SCHEDULER (Same as previous) ---
     def create_schedule_ui(self):
         frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
         self.frames["sched"] = frame
@@ -696,8 +794,12 @@ class WemoOpsApp(ctk.CTk):
         self.render_jobs()
 
     def update_schedule_dropdown(self):
-        names = list(self.known_devices_map.keys())
-        if names: self.sched_dev_combo.configure(values=names); self.sched_dev_combo.set(names[0])
+        names = []
+        for dev in self.known_devices_map.values(): names.append(dev.name)
+        names.sort()
+        if names: 
+            self.sched_dev_combo.configure(values=names)
+            self.sched_dev_combo.set(names[0])
 
     def _scheduler_engine(self):
         while True:
@@ -728,8 +830,14 @@ class WemoOpsApp(ctk.CTk):
 
     def execute_job(self, job):
         dev_name = job['device']
-        if dev_name in self.known_devices_map:
-            dev = self.known_devices_map[dev_name]
+        # Find device in map by name
+        dev = None
+        for d in self.known_devices_map.values():
+            if d.name == dev_name:
+                dev = d
+                break
+        
+        if dev:
             try:
                 if job['action'] == "Turn ON": dev.on()
                 elif job['action'] == "Turn OFF": dev.off()
@@ -792,6 +900,7 @@ class WemoOpsApp(ctk.CTk):
         self.prov_log.insert("end", f"{msg}\n")
         self.prov_log.see("end")
 
+    # --- RESTORED CONNECTION MONITOR (Scanning Ports) ---
     def _connection_monitor(self):
         target_ips = ["10.22.22.1", "192.168.49.1"]
         target_ports = [49153, 49152, 49154] 
