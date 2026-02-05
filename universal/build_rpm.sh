@@ -22,13 +22,22 @@ echo "   WEMO OPS - RPM PACKAGER (.RPM)        "
 echo "   Version: $VERSION-$RELEASE"
 echo "========================================="
 
-# 2. COMPILE BINARIES (Reuse virtualenv if present)
+# 2. COMPILE BINARIES (Smart Python Selection)
 echo "[1/4] Compiling Binaries..."
 
+# Detect Python 3.11 (Required for CustomTkinter on RHEL 8) or fall back to system default
+if command -v python3.11 &> /dev/null; then
+    PYTHON_BIN="python3.11"
+else
+    PYTHON_BIN="python3"
+fi
+echo "   > Using Python interpreter: $PYTHON_BIN"
+
 if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
+    $PYTHON_BIN -m venv .venv
 fi
 source .venv/bin/activate
+
 # Ensure dependencies are installed
 pip install -q "pywemo>=2.1.1" customtkinter requests pyinstaller pyperclip pystray Pillow
 
@@ -72,7 +81,7 @@ if [ -f "images/app_icon.ico" ]; then
     cp "images/app_icon.ico" "$SOURCE_DIR/"
 fi
 
-# --- NEW: Copy Local Fonts (If you have a fonts/ folder) ---
+# --- Bundle Local Fonts (If you have a fonts/ folder) ---
 if [ -d "fonts" ]; then
     echo "   > Bundling local fonts..."
     cp -r "fonts" "$SOURCE_DIR/"
@@ -87,9 +96,17 @@ cd "$SCRIPT_DIR"
 # 4. GENERATE SPEC FILE
 echo "[3/4] Generating .spec file..."
 cat > "$RPM_TOP_DIR/SPECS/$SAFE_NAME.spec" <<EOF
+# --- FIXES FOR PYINSTALLER BINARIES ---
+# Disable debug info generation (Fixes "Empty %files" error)
+%define debug_package %{nil}
+%define _enable_debug_packages 0
+# Disable build-id conflict checks (Fixes "Duplicate build-ids" error)
+%define _build_id_links none
+# --------------------------------------
+
 Name:           $SAFE_NAME
 Version:        $VERSION
-Release:        $RELEASE
+Release:        $RELEASE%{?dist}
 Summary:        $SUMMARY
 License:        Proprietary
 Group:          Applications/System
@@ -97,9 +114,10 @@ Source0:        %{name}-%{version}.tar.gz
 BuildArch:      $ARCH
 AutoReqProv:    no
 
-# Runtime Dependencies (RHEL/Fedora names)
-# Added fontconfig and standard fonts (Liberation/Noto)
-Requires:       python3, python3-tkinter, xclip, fontconfig, liberation-sans-fonts, google-noto-sans-fonts
+# Runtime Dependencies
+Requires:       python3, python3-tkinter, xclip, fontconfig
+# Font Dependencies (Standardizing for RHEL/Fedora)
+Requires:       liberation-sans-fonts, google-noto-sans-fonts
 
 %description
 Wemo Ops Center is a tool for provisioning and automating Wemo smart devices.
@@ -109,7 +127,7 @@ It includes a dashboard UI and a background automation service.
 %setup -q
 
 %build
-# Binaries are already compiled by PyInstaller, nothing to build here.
+# Binaries are already compiled by PyInstaller.
 
 %install
 mkdir -p %{buildroot}$INSTALL_DIR
@@ -126,12 +144,12 @@ if [ -f app_icon.ico ]; then
     install -m 644 app_icon.ico %{buildroot}$INSTALL_DIR/images/app_icon.ico
 fi
 
-# --- NEW: Install Fonts ---
+# --- Install Fonts ---
 if [ -d fonts ]; then
     mkdir -p %{buildroot}$INSTALL_DIR/fonts
     cp -r fonts/* %{buildroot}$INSTALL_DIR/fonts/
 fi
-# -------------------------
+# ---------------------
 
 # Symlink
 ln -s $INSTALL_DIR/$APP_NAME %{buildroot}/usr/bin/$APP_NAME
@@ -172,8 +190,9 @@ $INSTALL_DIR
 
 %post
 update-desktop-database &> /dev/null || :
-# --- NEW: Update Font Cache ---
+# --- Update Font Cache ---
 if [ -d "$INSTALL_DIR/fonts" ]; then
+    # Force re-scan of font directories
     fc-cache -f -v >/dev/null 2>&1 || :
 fi
 echo "Wemo Ops installed."
@@ -195,6 +214,7 @@ EOF
 
 # 5. BUILD RPM
 echo "[4/4] Running rpmbuild..."
+# We define _topdir to keep everything local to this project folder
 rpmbuild --define "_topdir $RPM_TOP_DIR" -bb "$RPM_TOP_DIR/SPECS/$SAFE_NAME.spec"
 
 # Move final RPM to dist folder
@@ -202,6 +222,6 @@ mv "$RPM_TOP_DIR/RPMS/$ARCH/"*.rpm dist/
 rm -rf "$RPM_TOP_DIR"
 
 echo "========================================="
-echo "   SUCCESS! RPM Ready:"
+echo "   SUCCESS! RPM Ready in dist/ folder:"
 ls dist/*.rpm
 echo "========================================="
