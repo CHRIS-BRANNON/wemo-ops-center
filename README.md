@@ -29,29 +29,25 @@ When you launch `WemoOps.exe` for the first time, you may see a blue warning fro
 # Wemo Ops Center
 
 **Wemo Ops Dashboard**
-
-![Wemo Ops Dashboard](assets/wemo-ops-dashboard.jpg)
+<img width="2368" height="1792" alt="dashboard_v4 1 7" src="https://github.com/user-attachments/assets/3d633e36-7279-4737-867c-19bd42364c98" />
 
 **Wemo Ops Provisioner**
 
-![Wemo Ops Dashboard](assets/wemo-ops-provisioner.jpg)
-
-**Wemo Ops Provisioner Connected**
-
-![Wemo Ops Dashboard](assets/wemo-ops-provisioner-connected.jpg)
+<img width="1372" height="1035" alt="provisioner_v4 1 7" src="https://github.com/user-attachments/assets/1634a3af-420d-4028-b2c4-4bcd8a8e5ae8" />
 
 **Wemo Ops Automation**
 
-![Wemo Ops Dashboard](assets/wemo-ops-automation.jpg)
+<img width="1366" height="1035" alt="automation_v4 1 7" src="https://github.com/user-attachments/assets/d2d4a04f-dfe1-4fa1-8821-57043ed2317a" />
 
 **Wemo Ops Maintenance**
 
-![Wemo Ops Dashboard](assets/wemo-ops-maintenance.jpg)
+<img width="1370" height="1035" alt="maintenance_v4 1 7" src="https://github.com/user-attachments/assets/2cfb0f7d-6b48-44d9-bb46-45b4d1fdb8da" />
+
 
 
 ---
-**Go to the [Releases Page](../../releases) and download `WemoOps_v4.1.6.exe`.**
-## 🚀 Key Features (v4.1.6)
+**Go to the [Releases Page](../../releases) and download `WemoOps_v4.1.7.exe`.**
+## 🚀 Key Features (v4.1.7)
 
 ### 1. 📡 Universal Provisioner
 * **No Cloud Required:** Connect directly to a new or reset Wemo device's Wi-Fi (`Wemo.Mini.xxx`) and push your Wi-Fi credentials instantly.
