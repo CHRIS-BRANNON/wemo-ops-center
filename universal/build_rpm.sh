@@ -3,7 +3,7 @@
 # --- CONFIGURATION ---
 APP_NAME="WemoOps"
 SAFE_NAME="wemo-ops" # RPMs don't like uppercase or spaces
-VERSION="4.1.6"
+VERSION="4.1.7"      # Incremented for font update
 RELEASE="1"
 ARCH="x86_64"        # RPM calls amd64 "x86_64"
 SUMMARY="Wemo Ops Center - Automation and Provisioning Tool"
@@ -72,6 +72,13 @@ if [ -f "images/app_icon.ico" ]; then
     cp "images/app_icon.ico" "$SOURCE_DIR/"
 fi
 
+# --- NEW: Copy Local Fonts (If you have a fonts/ folder) ---
+if [ -d "fonts" ]; then
+    echo "   > Bundling local fonts..."
+    cp -r "fonts" "$SOURCE_DIR/"
+fi
+# ---------------------------------------------------------
+
 # Create a tarball of the sources (Standard RPM practice)
 cd "$RPM_TOP_DIR/SOURCES"
 tar -czf "$SAFE_NAME-$VERSION.tar.gz" "$SAFE_NAME-$VERSION"
@@ -91,7 +98,8 @@ BuildArch:      $ARCH
 AutoReqProv:    no
 
 # Runtime Dependencies (RHEL/Fedora names)
-Requires:       python3, python3-tkinter, xclip
+# Added fontconfig and standard fonts (Liberation/Noto)
+Requires:       python3, python3-tkinter, xclip, fontconfig, liberation-sans-fonts, google-noto-sans-fonts
 
 %description
 Wemo Ops Center is a tool for provisioning and automating Wemo smart devices.
@@ -114,7 +122,16 @@ mkdir -p %{buildroot}/usr/lib/systemd/user
 install -m 755 $APP_NAME %{buildroot}$INSTALL_DIR/$APP_NAME
 install -m 755 wemo_service %{buildroot}$INSTALL_DIR/wemo_service
 # Install Icon
-install -m 644 app_icon.ico %{buildroot}$INSTALL_DIR/images/app_icon.ico
+if [ -f app_icon.ico ]; then
+    install -m 644 app_icon.ico %{buildroot}$INSTALL_DIR/images/app_icon.ico
+fi
+
+# --- NEW: Install Fonts ---
+if [ -d fonts ]; then
+    mkdir -p %{buildroot}$INSTALL_DIR/fonts
+    cp -r fonts/* %{buildroot}$INSTALL_DIR/fonts/
+fi
+# -------------------------
 
 # Symlink
 ln -s $INSTALL_DIR/$APP_NAME %{buildroot}/usr/bin/$APP_NAME
@@ -155,6 +172,10 @@ $INSTALL_DIR
 
 %post
 update-desktop-database &> /dev/null || :
+# --- NEW: Update Font Cache ---
+if [ -d "$INSTALL_DIR/fonts" ]; then
+    fc-cache -f -v >/dev/null 2>&1 || :
+fi
 echo "Wemo Ops installed."
 echo "Enable service with: systemctl --user enable --now wemo_ops"
 

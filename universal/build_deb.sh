@@ -2,8 +2,8 @@
 
 # --- CONFIGURATION ---
 APP_NAME="WemoOps"
-VERSION="4.1.6"
-ARCH="amd64"  # Use 'arm64' if building on Raspberry Pi
+VERSION="4.1.7"  # Incremented version for the font update
+ARCH="amd64"     # Use 'arm64' if building on Raspberry Pi
 MAINTAINER="Quentin Russell <quentin@quentinrussell.com>"
 DESC="Wemo Ops Center - Automation and Provisioning Tool"
 MAIN_SCRIPT="wemo_ops_universal.py"
@@ -26,6 +26,7 @@ echo "========================================="
 echo "[1/5] Checking Build Tools..."
 if [ -f /etc/debian_version ]; then
     sudo apt-get update -qq
+    # Added build-essential and binutils for PyInstaller
     sudo apt-get install -y python3-venv python3-pip python3-tk xclip build-essential binutils
 fi
 
@@ -97,6 +98,14 @@ if [ -f "images/app_icon.ico" ]; then
     cp "images/app_icon.ico" "$STAGING_DIR$INSTALL_DIR/images/"
 fi
 
+# --- NEW: Copy Local Fonts (If you have a fonts/ folder) ---
+if [ -d "fonts" ]; then
+    echo "   > Bundling local fonts..."
+    mkdir -p "$STAGING_DIR$INSTALL_DIR/fonts"
+    cp -r "fonts/"* "$STAGING_DIR$INSTALL_DIR/fonts/"
+fi
+# ---------------------------------------------------------
+
 # Symlink
 ln -s "$INSTALL_DIR/$APP_NAME" "$STAGING_DIR/usr/bin/$APP_NAME"
 
@@ -129,6 +138,7 @@ WantedBy=default.target
 EOF
 
 # Control File
+# --- UPDATED DEPENDENCIES FOR FONTS ---
 cat > "$STAGING_DIR/DEBIAN/control" <<EOF
 Package: wemo-ops
 Version: $VERSION
@@ -137,7 +147,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Description: $DESC
-Depends: python3, python3-tk, xclip
+Depends: python3, python3-tk, xclip, fonts-liberation, fonts-noto, fontconfig
 EOF
 
 # Post-Install Script
@@ -145,6 +155,10 @@ cat > "$STAGING_DIR/DEBIAN/postinst" <<EOF
 #!/bin/bash
 chmod 755 $INSTALL_DIR/$APP_NAME
 chmod 755 $INSTALL_DIR/wemo_service
+# Refresh font cache if we copied new ones
+if [ -d "$INSTALL_DIR/fonts" ]; then
+    fc-cache -f -v >/dev/null 2>&1 || true
+fi
 update-desktop-database /usr/share/applications || true
 echo "Wemo Ops installed successfully."
 echo "Enable the background service: systemctl --user enable --now wemo_ops"
