@@ -15,7 +15,7 @@ from tkinter import messagebox
 import pyperclip
 
 # --- CONFIGURATION ---
-VERSION = "v4.1.6"
+VERSION = "v4.1.7 (Performance Optimized)"
 
 # --- PATH SETUP (Cross-Platform) ---
 if sys.platform == "darwin":
@@ -114,11 +114,12 @@ class ServiceManager:
     def is_running():
         try:
             if sys.platform == "win32":
-                output = subprocess.check_output('tasklist /FI "IMAGENAME eq wemo_service.exe"', shell=True).decode()
+                # Use list args to avoid shell=True overhead where possible
+                output = subprocess.check_output(['tasklist', '/FI', 'IMAGENAME eq wemo_service.exe'], creationflags=0x08000000).decode()
                 return "wemo_service.exe" in output
             else:
                 try:
-                    subprocess.check_output('pgrep -f "wemo_service"', shell=True)
+                    subprocess.check_output(['pgrep', '-f', 'wemo_service'])
                     return True
                 except: return False
         except: return False
@@ -139,7 +140,7 @@ class ServiceManager:
 #  DEEP SCANNER
 # ==============================================================================
 class DeepScanner:
-    def probe_port(self, ip, port=49153, timeout=0.5):
+    def probe_port(self, ip, port=49153, timeout=0.3):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
         try:
@@ -168,7 +169,8 @@ class DeepScanner:
         active_ips = []
         if status_callback: status_callback(f"Probing {len(all_hosts)} IPs across networks...")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        # Increased workers for smoother parallel scanning
+        with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
             futures = {executor.submit(self.probe_port, ip): ip for ip in all_hosts}
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
@@ -251,6 +253,7 @@ class WemoOpsApp(ctk.CTk):
 
         self.current_setup_ip = None 
         self.current_setup_port = None 
+        self.manual_override_active = False 
         
         self.profiles = self.load_json(PROFILE_FILE, dict)
         self.settings = self.load_json(SETTINGS_FILE, dict)
@@ -317,16 +320,23 @@ class WemoOpsApp(ctk.CTk):
         threading.Thread(target=self._scheduler_engine, daemon=True).start()
         self.check_service_loop()
 
-    # --- SERVICE CONTROL ---
+    # --- SERVICE CONTROL (THREADED) ---
     def check_service_loop(self):
-        is_running = ServiceManager.is_running()
+        # Run the blocking check in a thread to prevent UI freezing
+        def task():
+            is_running = ServiceManager.is_running()
+            self.after(0, lambda: self._update_service_ui(is_running))
+        
+        threading.Thread(target=task, daemon=True).start()
+        self.after(3000, self.check_service_loop)
+
+    def _update_service_ui(self, is_running):
         if is_running:
             self.svc_status.configure(text="✅ RUNNING", text_color="#28a745")
             self.svc_btn.pack_forget()
         else:
             self.svc_status.configure(text="❌ STOPPED", text_color="#ff5555")
             self.svc_btn.pack(fill="x", pady=(5,0))
-        self.after(3000, self.check_service_loop)
 
     def start_service_manually(self):
         self.svc_btn.configure(state="disabled", text="Starting...")
@@ -460,12 +470,21 @@ class WemoOpsApp(ctk.CTk):
         top.pack(fill="x", padx=10, pady=(10, 5))
         ctk.CTkLabel(top, text="⚡", font=("Arial", 20)).pack(side="left", padx=(0,10))
         ctk.CTkLabel(top, text=f"{dev.name}", font=("Roboto", 16, "bold")).pack(side="left")
+        
+        # Action to Toggle
         def toggle(): threading.Thread(target=dev.toggle, daemon=True).start()
         switch = ctk.CTkSwitch(top, text="Power", command=toggle)
         switch.pack(side="right")
-        try: 
-            if dev.get_state(): switch.select()
-        except: pass
+        
+        # --- NON-BLOCKING STATE FETCH (Fixes Freeze) ---
+        def fetch_state():
+            try:
+                state = dev.get_state()
+                if state: self.after(0, switch.select)
+            except: pass
+        threading.Thread(target=fetch_state, daemon=True).start()
+        # -----------------------------------------------
+
         mid = ctk.CTkFrame(card, fg_color="transparent")
         mid.pack(fill="x", padx=10, pady=0)
         ctk.CTkLabel(mid, text=f"IP: {dev.host} | MAC: {mac} | SN: {serial}", font=("Consolas", 11), text_color="#aaa").pack(anchor="w")
@@ -588,7 +607,8 @@ class WemoOpsApp(ctk.CTk):
             if friendly_name and hasattr(dev, 'basicevent'):
                 self.log_prov(f"Setting Name to: {friendly_name}")
                 dev.basicevent.ChangeFriendlyName(FriendlyName=friendly_name)
-                time.sleep(1) 
+                self.log_prov("Wait 5s for flash write...")
+                time.sleep(5) 
             self.log_prov("Starting Adaptive Encryption Loop (v3.1 Smart Loop)...")
             self._brute_force_provision(dev, ssid, pwd)
             self.log_prov("SUCCESS: Configuration Sent!")
@@ -606,7 +626,9 @@ class WemoOpsApp(ctk.CTk):
                     dev.setup(ssid=ssid, password=pwd, _encrypt_method=mode, _add_password_lengths=length)
                     self.log_prov(f"  > Accepted!")
                     return
-                except: pass
+                except Exception as e:
+                    self.log_prov(f"  > Failed: {e}")
+                    pass
         raise Exception("All provisioning attempts failed.")
 
     # --- MAINTENANCE (FIXED) ---
@@ -905,6 +927,9 @@ class WemoOpsApp(ctk.CTk):
         target_ips = ["10.22.22.1", "192.168.49.1"]
         target_ports = [49153, 49152, 49154] 
         while self.monitoring:
+            if self.manual_override_active: 
+                time.sleep(3)
+                continue
             found_dev = None
             found_ip = None
             found_port = None
@@ -914,9 +939,7 @@ class WemoOpsApp(ctk.CTk):
                         check_url = f"http://{ip}:{port}/setup.xml"
                         found_dev = pywemo.discovery.device_from_description(check_url)
                         if found_dev:
-                            found_ip = ip
-                            found_port = port
-                            break
+                            found_ip = ip; found_port = port; break
                     except: pass
                 if found_dev: break
             if found_dev: 
