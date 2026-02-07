@@ -1,14 +1,27 @@
 # Wemo Ops Center
+Welcome to Wemo Ops. We offer two ways to manage your smart home, depending on your needs. You can run the Desktop App for instant control on your workstation, or deploy the Server for always-on automation.
 
 ![Wemo Ops Center Dashboard](assets/wemo-ops.png)
 
-![Version](https://img.shields.io/badge/version-v4.1.7-blue)
+![Version](https://img.shields.io/badge/version-v4.2.6-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ---
 **Resurrect your hardware.** The Wemo Cloud is dead, but your devices don't have to be.
 
 Wemo Ops Center is a completely local, offline provisioning and automation suite for Belkin Wemo devices. It allows you to setup, control, automate, and factory reset Wemo plugs and switches without needing the official app or a cloud account.
+
+## 🚀 Choose Your Edition
+
+| Feature | 🖥️ Desktop App (GUI) | ⚙️ Server App (Headless) |
+| :--- | :--- | :--- |
+| **Best For** | Casual users, quick toggling, setup | Power users, Home Labs, 24/7 automation |
+| **Interface** | Native Window (Python/Tkinter) | Web Dashboard (Browser-based) |
+| **Running State** | Runs only when open | Runs 24/7 as a background service |
+| **OS Support** | Linux (Fedora/Ubuntu), Windows | Linux Server, Raspberry Pi, Docker |
+| **Key Benefit** | **Zero Setup.** Just launch and click. | **Set & Forget.** Automation never stops. |
+
+# Wemo Ops Center (Desktop)
 ## 📥 Download & Run
 
 No Python installation required.
@@ -25,8 +38,7 @@ When you launch `WemoOps.exe` for the first time, you may see a blue warning fro
 **To run the app:**
 1. Click **More info**.
 2. Click **Run anyway**.
-
-# Wemo Ops Center
+The complete control plane for Belkin Wemo devices.
 
 <table>
   <tr>
@@ -55,12 +67,9 @@ When you launch `WemoOps.exe` for the first time, you may see a blue warning fro
   </tr>
 </table>
 
-
-
-
 ---
 **Go to the [Releases Page](../../releases) and download.**
-## 🚀 Key Features (v4.1.7)
+## 🚀 Key Features (v4.2.6)
 
 ### 1. 📡 Universal Provisioner
 * **No Cloud Required:** Connect directly to a new or reset Wemo device's Wi-Fi (`Wemo.Mini.xxx`) and push your Wi-Fi credentials instantly.
@@ -86,3 +95,75 @@ Advanced tools to manage device health directly from the app:
 
 ### ⚠️ Disclaimer
 This project is an independent open-source tool and is not affiliated with, endorsed by, or associated with Belkin International, Inc. "Wemo" is a trademark of Belkin International, Inc.
+
+## 🖥️ Option 1: The Desktop App
+(Recommended for most users)
+
+* **Wemo Ops Center (Desktop)** is a native application that lives on your computer. It allows you to scan your network, toggle devices on/off instantly, and manage device firmware without needing a dedicated server.
+
+### Why use this?
+
+* **Instant Control:** No web browser needed; just open the app.
+
+* **Portable:** Run it on your laptop and control devices wherever you are on the network.
+
+* **Visual Setup:** Easy-to-use interface for renaming and configuring devices.
+
+## 📦 Installation (Linux):
+
+```bash
+sudo dnf install wemo-ops       # Fedora / Rocky
+```
+### OR
+```bash
+sudo apt install wemo-ops       # Ubuntu / Debian
+```
+## ⚙️ Option 2: The Automation Server
+(For Homelabs & Always-On Automation)
+
+Wemo Ops Server is a lightweight, headless service designed to run on a Raspberry Pi, VM, or Home Server. It provides a Web UI accessible from any device on your network and executes automation schedules even when your computer is turned off.
+<table>
+  <tr>
+    <th width="50%">Dashboard</th>
+    <th width="50%">Settings</th>
+  </tr>
+  <tr>
+    <td><img width="981" height="1137" alt="dashboard-dark" src="https://github.com/user-attachments/assets/e946d2c9-af92-4304-b8dd-d9f3108d7497" /></td>
+    <td><img width="975" height="1135" alt="settings-dark" src="https://github.com/user-attachments/assets/73c6ac96-6ffb-46f8-b0b3-f97b843223e5" /></td>
+  </tr>
+  <tr>
+    <th width="50%">Automation Time</th>
+    <th width="50%">Automation Sunrise/Sunset</th>
+  </tr>
+  <tr>
+    <td><img width="977" height="1137" alt="automation-dark" src="https://github.com/user-attachments/assets/5b5a59fc-6272-43fd-81f6-d601dec3efd2" /></td>
+    <td><img width="1005" height="1136" alt="automation2-dark" src="https://github.com/user-attachments/assets/5eb25162-c369-456c-a7ff-eb303857fde4" /></td>
+</td>
+</tr>
+</table>
+
+### Why use this?
+
+* 24/7 Reliability: Your automation schedules (e.g., "Lights on at sunset") run even if your laptop is asleep.
+
+* Any Device Access: Control your home from your phone, tablet, or another PC via the Web Dashboard.
+
+* Low Resource Usage: Optimized to run silently in the background.
+
+## 📦 Installation (Linux):
+
+```bash
+sudo dnf install wemo-ops-server  # Fedora / Rocky
+```
+### OR
+```bash
+sudo apt install wemo-ops-server  # Ubuntu / Debian
+```
+## 🤝 Better Together: The Hybrid Approach
+"Can I use both?" Yes! In fact, this is the most powerful way to use Wemo Ops.
+
+* Use the Server to handle the "boring stuff"—keeping schedules running, monitoring device health, and providing a dashboard for your phone.
+
+* Use the Desktop App on your workstation for rapid control while you work, or for deep configuration tasks like firmware updates or bulk provisioning.
+
+* Both applications can run on the same network and control the same devices simultaneously without conflict.
