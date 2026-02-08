@@ -1,7 +1,13 @@
 # Stage 1: Build dependencies
-FROM python:3.11-alpine AS builder
+FROM python:3.11-slim AS builder
 
-RUN apk add --no-cache gcc musl-dev libxml2-dev libxslt-dev libffi-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -9,9 +15,13 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir flask requests pywemo
 
 # Stage 2: Runtime
-FROM python:3.11-alpine
+FROM python:3.11-slim
 
-RUN apk add --no-cache libxml2 libxslt su-exec
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxml2 \
+    libxslt1.1 \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
