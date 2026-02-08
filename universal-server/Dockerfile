@@ -37,6 +37,6 @@ RUN mkdir -p /data
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status')" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\",5000)}/api/status')" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
