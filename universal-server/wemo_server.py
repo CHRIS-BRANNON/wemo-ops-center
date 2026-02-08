@@ -101,12 +101,11 @@ def get_solar_times():
 # --- DEEP SCANNER ---
 class DeepScanner:
     def probe_port(self, ip, port=49153, timeout=0.2):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)
         try:
-            s.connect((str(ip), port))
-            s.close()
-            return str(ip)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                s.connect((str(ip), port))
+                return str(ip)
         except: return None
 
     def scan_subnet(self, subnets):
