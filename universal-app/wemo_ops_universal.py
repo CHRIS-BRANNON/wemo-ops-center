@@ -17,17 +17,17 @@ import tempfile
 from tkinter import messagebox
 import pyperclip
 
-# --- QR Code Support ---
+# --- QR Code & Image Support ---
 try:
     import qrcode
-    from PIL import Image
+    from PIL import Image, ImageTk 
     HAS_QR = True
 except ImportError:
     HAS_QR = False
 
 # --- CONFIGURATION ---
-VERSION = "v5.1.4-App"
-SERVER_URL = "http://localhost:5000"
+VERSION = "v5.1.6-Stable"
+SERVER_URL = "http://localhost:5050"  # Port 5050 (Avoids AirPlay)
 UPDATE_API_URL = "https://api.github.com/repos/qrussell/wemo-ops-center/releases/latest"
 UPDATE_PAGE_URL = "https://github.com/qrussell/wemo-ops-center/releases"
 
@@ -48,19 +48,26 @@ SCHEDULE_FILE = os.path.join(APP_DATA_DIR, "schedules.json")
 SETTINGS_FILE = os.path.join(APP_DATA_DIR, "settings.json")
 
 # --- SERVICE DETECTION ---
+# Defines where the App looks for the background service binary
 if sys.platform == "win32":
     SERVICE_EXE_PATH = os.path.join(APP_DATA_DIR, "wemo_service.exe")
 else:
     possible_paths = [
+        # 1. User Data Folder (Mac Installer Location)
         os.path.join(APP_DATA_DIR, "wemo_service"),
+        # 2. Linux System Install
         "/opt/WemoOps/wemo_service",
+        # 3. Standard Bin
         "/usr/bin/wemo_service"
     ]
-    SERVICE_EXE_PATH = possible_paths[0]
+    SERVICE_EXE_PATH = None
     for p in possible_paths:
         if os.path.exists(p):
             SERVICE_EXE_PATH = p
             break
+    # Fallback if not found (default to Mac path for creation)
+    if not SERVICE_EXE_PATH:
+        SERVICE_EXE_PATH = os.path.join(APP_DATA_DIR, "wemo_service")
 
 if getattr(sys, 'frozen', False):
     os.environ['PATH'] += os.pathsep + sys._MEIPASS
@@ -449,8 +456,21 @@ class WemoOpsApp(ctk.CTk):
         self.service_frame.pack(side="bottom", fill="x", pady=20, padx=10)
         self.svc_lbl = ctk.CTkLabel(self.service_frame, text="Server Connection:", font=("Arial", 12, "bold"), text_color=COLOR_TEXT)
         self.svc_lbl.pack(anchor="w")
+        
         self.svc_status = ctk.CTkLabel(self.service_frame, text="Checking...", text_color="gray", font=FONT_BODY)
         self.svc_status.pack(anchor="w")
+
+        # --- NEW START BUTTON ---
+        # This button allows manual start if the background service fails
+        self.btn_start_svc = ctk.CTkButton(
+            self.service_frame, 
+            text="▶ Start Server", 
+            width=100, 
+            height=24,
+            fg_color="#2d8a4e", 
+            command=self.start_local_server
+        )
+        self.btn_start_svc.pack(pady=(5,0), anchor="w")
         
         # --- UPDATE BUTTON ---
         self.btn_update = ctk.CTkButton(self.sidebar, text="⬇ Update Available", fg_color=COLOR_UPDATE, 
@@ -483,6 +503,54 @@ class WemoOpsApp(ctk.CTk):
         # Start Server Heartbeat (Kickoff)
         self.after(1000, self.heartbeat_loop)
 
+    # --- SERVER MANAGEMENT (Restored Feature) ---
+    def start_local_server(self):
+        """Attempts to launch the backend server manually."""
+        if self.api.check_connection():
+            messagebox.showinfo("Status", "Server is already running!")
+            return
+
+        # 1. Locate the Binary
+        binary_path = SERVICE_EXE_PATH
+        
+        # Fallback for Development (Running from source)
+        if not binary_path or not os.path.exists(binary_path):
+            if os.path.exists("wemo_server.py"):
+                # Dev mode: run python script
+                cmd = [sys.executable, "wemo_server.py"]
+            else:
+                messagebox.showerror("Error", f"Cannot find server binary at:\n{binary_path}\n\nPlease reinstall or check permissions.")
+                return
+        else:
+            # Prod mode: run executable
+            cmd = [binary_path]
+
+        try:
+            # 2. Launch in Background (Non-blocking)
+            self.svc_status.configure(text="Starting...", text_color="orange")
+            
+            # Windows needs specific flags to hide the console window
+            startupinfo = None
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            subprocess.Popen(cmd, startupinfo=startupinfo)
+            
+            # 3. Wait and Verify
+            self.after(3000, self._force_heartbeat_check)
+            
+        except Exception as e:
+            messagebox.showerror("Launch Error", str(e))
+
+    def _force_heartbeat_check(self):
+        if self.api.check_connection():
+            self._update_heartbeat_ui(True)
+            messagebox.showinfo("Success", "Server started successfully!")
+        else:
+            self.svc_status.configure(text="Start Failed", text_color="red")
+            messagebox.showwarning("Timeout", "Server started but is not responding yet.\nIt might be initializing or blocked.")
+
     # --- HYBRID HEARTBEAT LOOP ---
     def heartbeat_loop(self):
         threading.Thread(target=self._heartbeat_task, daemon=True).start()
@@ -508,8 +576,12 @@ class WemoOpsApp(ctk.CTk):
                 txt += "\n(Scanning...)"
             
             self.svc_status.configure(text=txt, text_color=COLOR_SUCCESS)
+            # Hide button if connected
+            self.btn_start_svc.pack_forget() 
         else:
             self.svc_status.configure(text="⚠️ STANDALONE", text_color="orange")
+            # Show button if disconnected
+            self.btn_start_svc.pack(pady=(5,0), anchor="w")
 
     # --- UPDATE CHECKER LOGIC ---
     def run_update_check(self):
@@ -1319,11 +1391,11 @@ class WemoOpsApp(ctk.CTk):
         try:
             # 1. Get correct URL
             if self.use_api_mode:
-                try: ip = NetworkUtils.get_local_ip(); url = f"http://{ip}:5000"
-                except: url = "http://localhost:5000"
+                try: ip = NetworkUtils.get_local_ip(); url = f"http://{ip}:5050" # Updated Port
+                except: url = "http://localhost:5050"
             else:
-                try: ip = NetworkUtils.get_local_ip(); url = f"http://{ip}:5000"
-                except: url = "http://localhost:5000"
+                try: ip = NetworkUtils.get_local_ip(); url = f"http://{ip}:5050" # Updated Port
+                except: url = "http://localhost:5050"
 
             # 2. Generate QR Data
             qr = qrcode.QRCode(box_size=10, border=4)

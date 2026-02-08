@@ -10,10 +10,11 @@ import ipaddress
 import concurrent.futures
 import requests
 from flask import Flask, render_template_string, jsonify, request
+from waitress import serve  # REQUIRED for production/frozen builds
 
 # --- CONFIGURATION ---
-VERSION = "v5.0.0-Server"
-PORT = 5000
+VERSION = "v5.1.5-Server"
+PORT = 5050  # Updated to 5050 to avoid AirPlay conflict
 HOST = "0.0.0.0"
 
 # --- PATH SETUP ---
@@ -576,4 +577,11 @@ if __name__ == "__main__":
     settings = load_json(SETTINGS_FILE, {})
     threading.Thread(target=scanner_loop, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
-    app.run(host=HOST, port=PORT, debug=False)
+    
+    print("----------------------------------------------------------------")
+    print(f"   WEMO OPS SERVER - LISTENING ON PORT {PORT}")
+    print("   (Port 5000 is reserved for AirPlay on macOS)")
+    print("----------------------------------------------------------------")
+    
+    # Use Waitress for Production/PyInstaller builds
+    serve(app, host=HOST, port=PORT, threads=6)
