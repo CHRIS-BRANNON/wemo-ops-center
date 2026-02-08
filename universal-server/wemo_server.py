@@ -12,7 +12,7 @@ import requests
 from flask import Flask, render_template_string, jsonify, request
 
 # --- CONFIGURATION ---
-VERSION = "v1.0.1-Tabs"
+VERSION = "v1.0.2"
 PORT = int(os.environ.get("PORT", 5050))
 HOST = "0.0.0.0"
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", 300))

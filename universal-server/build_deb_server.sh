@@ -2,7 +2,7 @@
 
 # Configuration
 APP_NAME="wemo-ops-server"
-VERSION="1.0.1"
+VERSION="1.0.2"
 ARCH="amd64"
 MAINTAINER="Quentin Russell <qrussell@example.com>"
 DESC="Headless Wemo Automation Server with Web UI"
