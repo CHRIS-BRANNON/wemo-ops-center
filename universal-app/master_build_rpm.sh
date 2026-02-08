@@ -2,7 +2,7 @@
 
 # ==============================================================================
 #  WEMO OPS - MASTER BUILDER (RPM / Linux)
-#  Version: 5.1.4-App
+#  Version: 5.1.6-App
 # ==============================================================================
 
 set -e
@@ -10,7 +10,7 @@ set -e
 # --- CONFIGURATION ---
 APP_NAME="WemoOps"
 SAFE_NAME="wemo-ops"
-VERSION="5.1.4"
+VERSION="5.1.6"
 RELEASE="1"
 ARCH="x86_64"
 SUMMARY="Wemo Ops Center - Automation Server and Client"
