@@ -15,6 +15,7 @@ from flask import Flask, render_template_string, jsonify, request
 VERSION = "v1.0.1-Tabs"
 PORT = int(os.environ.get("PORT", 5000))
 HOST = "0.0.0.0"
+SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", 300))
 
 # --- PATH SETUP ---
 if sys.platform == "win32":
@@ -161,7 +162,7 @@ def scanner_loop():
         except Exception as e:
             logger.error(f"Scan error: {e}")
             scan_status = "Error"
-        time.sleep(300) # Auto-scan every 5 mins
+        time.sleep(SCAN_INTERVAL)
 
 def scheduler_loop():
     while True:
