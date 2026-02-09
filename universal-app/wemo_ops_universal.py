@@ -26,7 +26,7 @@ except ImportError:
     HAS_QR = False
 
 # --- CONFIGURATION ---
-VERSION = "v5.3.0-SmartScan"
+VERSION = "v5.2.3-Stable"
 SERVER_PORT = 5050
 SERVER_URL = f"http://localhost:{SERVER_PORT}"
 UPDATE_API_URL = "https://api.github.com/repos/qrussell/wemo-ops-center/releases/latest"
