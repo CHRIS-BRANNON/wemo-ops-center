@@ -26,7 +26,7 @@ except ImportError:
     HAS_QR = False
 
 # --- CONFIGURATION ---
-VERSION = "v5.2.3-Stable"
+VERSION = "v5.3.0-SmartScan"
 SERVER_PORT = 5050
 SERVER_URL = f"http://localhost:{SERVER_PORT}"
 UPDATE_API_URL = "https://api.github.com/repos/qrussell/wemo-ops-center/releases/latest"
@@ -71,7 +71,7 @@ FONT_BODY = ("Roboto", 14)
 FONT_MONO = ("Consolas", 13)
 
 # ==============================================================================
-#  API CLIENT
+#  API CLIENT (With Device Fetching)
 # ==============================================================================
 class APIClient:
     def __init__(self):
@@ -86,6 +86,11 @@ class APIClient:
         except: pass
         self.connected = False
         return False
+
+    def get_devices(self):
+        # [NEW] Fetch device list from Server to avoid broadcast race conditions
+        try: return requests.get(f"{SERVER_URL}/api/devices", timeout=1).json()
+        except: return []
 
 # ==============================================================================
 #  NETWORK UTILS
@@ -276,7 +281,6 @@ class WemoOpsApp(ctk.CTk):
         self.title(f"Wemo Ops Center {VERSION}")
         self.geometry("1100x800")
         
-        # Icon setup
         self.set_icon(self)
 
         self.grid_columnconfigure(1, weight=1)
@@ -289,7 +293,7 @@ class WemoOpsApp(ctk.CTk):
         self.saved_subnets = self.settings.get("subnets", [])
         
         self.known_devices_map = {}
-        self.device_switches = {} # [NEW] Track switches for live updates
+        self.device_switches = {} 
         self.last_rendered_device_names = [] 
         self.solar = SolarEngine()
         self.scanner = DeepScanner()
@@ -349,8 +353,6 @@ class WemoOpsApp(ctk.CTk):
         threading.Thread(target=self._connection_monitor, daemon=True).start()
         threading.Thread(target=self._scheduler_engine, daemon=True).start()
         threading.Thread(target=self.run_update_check, daemon=True).start()
-        
-        # [NEW] Start State Poller for Live Updates
         threading.Thread(target=self._state_poller, daemon=True).start()
         
         self.server_heartbeat()
@@ -370,12 +372,10 @@ class WemoOpsApp(ctk.CTk):
     def set_icon(self, window):
         try:
             if getattr(sys, 'frozen', False):
-                base_path = sys._MEIPASS
+                base_path = os.path.join(sys._MEIPASS, "images")
             else:
-                base_path = os.path.dirname(os.path.abspath(__file__))
-            
-            icon_path = os.path.join(base_path, "images", "app_icon.ico")
-            
+                base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+            icon_path = os.path.join(base_path, "app_icon.ico")
             if os.path.exists(icon_path):
                 window.iconbitmap(icon_path)
         except Exception:
@@ -409,43 +409,33 @@ class WemoOpsApp(ctk.CTk):
         except: pass
         self.after(5000, self.server_heartbeat)
 
-    # --- DASHBOARD (LIVE UPDATE SUPPORT) ---
+    # --- DASHBOARD ---
     def create_dashboard(self):
         f = ctk.CTkFrame(self.content, fg_color="transparent"); self.frames["dash"] = f
         
-        # Main Header Frame
         head = ctk.CTkFrame(f, fg_color="transparent"); head.pack(fill="x", pady=(0, 20))
-        
-        # Title (Left)
         ctk.CTkLabel(head, text="Network Overview", font=FONT_H1, text_color=COLOR_TEXT).pack(side="left", anchor="n")
         
-        # Right Side Panel (Vertical Stack to prevent jitter)
         right_panel = ctk.CTkFrame(head, fg_color="transparent")
         right_panel.pack(side="right", anchor="e")
         
-        # -- Row 1: Controls --
         ctrl_row = ctk.CTkFrame(right_panel, fg_color="transparent")
         ctrl_row.pack(side="top", anchor="e")
         
-        # Subnet Dropdown
         self.subnet_combo = ctk.CTkComboBox(ctrl_row, width=180, values=self.saved_subnets)
         self.subnet_combo.pack(side="left", padx=(0, 5))
         self.subnet_combo.set(NetworkUtils.get_subnet_cidr())
         
-        # Save/Del Buttons
         ctk.CTkButton(ctrl_row, text="Save", width=50, command=self.save_subnet, fg_color=COLOR_ACCENT).pack(side="left", padx=2)
         ctk.CTkButton(ctrl_row, text="Del", width=50, command=self.delete_subnet, fg_color=COLOR_DANGER).pack(side="left", padx=(2, 10))
         
-        # Deep Scan & Scan Button
         self.use_deep_scan = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(ctrl_row, text="Deep Scan", variable=self.use_deep_scan, width=80).pack(side="left", padx=5)
         ctk.CTkButton(ctrl_row, text="Scan", width=100, command=self.run_local_scan, fg_color=COLOR_ACCENT).pack(side="left", padx=5)
         
-        # -- Row 2: Status Label (Fixed Underneath) --
         self.scan_status = ctk.CTkLabel(right_panel, text="Ready", text_color="orange", font=("Arial", 12))
         self.scan_status.pack(side="top", anchor="e", padx=10, pady=(2, 0))
         
-        # Device List
         self.dev_list = ctk.CTkScrollableFrame(f, label_text="Devices", label_text_color=COLOR_TEXT); self.dev_list.pack(fill="both", expand=True)
 
     def save_subnet(self):
@@ -471,7 +461,40 @@ class WemoOpsApp(ctk.CTk):
         subnet = self.subnet_combo.get().strip()
         is_deep = self.use_deep_scan.get() 
         self.scan_status.configure(text="Initializing...")
-        threading.Thread(target=self._scan_task, args=(subnet, is_deep), daemon=True).start()
+        
+        # [FIX] DELEGATED SCANNING: Check Server First
+        if self.api.connected:
+            self.scan_status.configure(text="Fetching from Server...")
+            threading.Thread(target=self._server_sync_task, daemon=True).start()
+        else:
+            threading.Thread(target=self._scan_task, args=(subnet, is_deep), daemon=True).start()
+
+    def _server_sync_task(self):
+        # [NEW] Download devices from Server API (Instant)
+        try:
+            devices_data = self.api.get_devices()
+            new_map = {}
+            for d_data in devices_data:
+                # Reconstruct a usable Device object from JSON data
+                # We use device_from_description to get a full object efficiently via Unicast
+                ip = d_data.get('ip')
+                if ip:
+                    for port in [49153, 49152, 49154, 49155]:
+                        try:
+                            url = f"http://{ip}:{port}/setup.xml"
+                            dev = pywemo.discovery.device_from_description(url)
+                            if dev:
+                                new_map[dev.name] = dev
+                                break
+                        except: pass
+            
+            self.known_devices_map = new_map
+            self.after(0, lambda: self.scan_status.configure(text="Synced with Server"))
+            self.after(0, self.render_devices)
+            self.after(0, self.update_maint_dropdown)
+            self.after(0, self.update_schedule_dropdown)
+        except:
+            self.after(0, lambda: self.scan_status.configure(text="Server Sync Failed"))
 
     def _scan_task(self, subnet, use_deep):
         def log(m): self.after(0, lambda: self.scan_status.configure(text=m))
@@ -498,9 +521,7 @@ class WemoOpsApp(ctk.CTk):
         self.run_local_scan()
 
     def render_devices(self):
-        # [NEW] Clear switch registry on redraw
         self.device_switches = {}
-        
         current_names = sorted(list(self.known_devices_map.keys()))
         if current_names == self.last_rendered_device_names: return 
         self.last_rendered_device_names = current_names
@@ -527,7 +548,6 @@ class WemoOpsApp(ctk.CTk):
         def tog(d=dev): threading.Thread(target=d.toggle, daemon=True).start()
         sw = ctk.CTkSwitch(t, text="Power", command=tog, text_color=COLOR_TEXT); sw.pack(side="right")
         
-        # [NEW] Register Switch for Live Updates
         self.device_switches[dev.name] = sw
         
         try:
@@ -572,25 +592,21 @@ class WemoOpsApp(ctk.CTk):
     def _state_poller(self):
         while self.monitoring:
             try:
-                # Don't poll if dashboard isn't visible (save resources)
                 try:
                     if not self.frames["dash"].winfo_ismapped():
                         time.sleep(2)
                         continue
                 except: pass
 
-                # Cycle through known devices
                 for name, dev in self.known_devices_map.items():
                     if name in self.device_switches:
                         try:
                             # FORCE UPDATE from physical device
                             state = dev.get_state(force_update=True)
-                            
-                            # Safe UI Update on Main Thread
                             self.after(0, lambda n=name, s=state: self._update_switch_safe(n, s))
                         except: pass
             except: pass
-            time.sleep(2) # 2 Second Refresh Rate
+            time.sleep(2) 
 
     def _update_switch_safe(self, name, state):
         if name in self.device_switches:
@@ -698,7 +714,7 @@ class WemoOpsApp(ctk.CTk):
         if success: self.log_prov(f"Success: Connected to {ssid}")
         else: self.log_prov(f"Failed to connect to {ssid}. Try manual connection.")
 
-    # --- MISSING PROFILE METHODS ---
+    # --- MISSING PROFILE METHODS ADDED HERE ---
     def apply_profile(self, c):
         if c in self.profiles:
             self.ssid_entry.delete(0, "end")
