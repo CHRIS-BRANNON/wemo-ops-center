@@ -1,6 +1,6 @@
 services:
   wemo-server:
-    build: .
+    image: ghcr.io/qrussell/wemo-ops-server:latest
     container_name: wemo-ops-server
     restart: unless-stopped
     network_mode: host
