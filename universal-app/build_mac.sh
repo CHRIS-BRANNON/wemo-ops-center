@@ -8,7 +8,7 @@
 set -e
 
 APP_NAME="WemoOps"
-VERSION="5.2.3"
+VERSION="5.2.3-2"
 CLIENT_SCRIPT="wemo_ops_universal.py"
 SERVER_SCRIPT="wemo_server.py"
 
